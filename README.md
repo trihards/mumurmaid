@@ -1,4 +1,4 @@
-# mumurmaid
+# Murmurmaid
 
 A single-file white-noise page for sleeping. Open `index.html` (or host it on GitHub Pages) on your phone and hit play.
 

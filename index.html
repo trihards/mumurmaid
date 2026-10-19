@@ -3,43 +3,84 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#05080d">
+<meta name="theme-color" content="#030a14">
 <meta name="color-scheme" content="dark">
-<title>mumurmaid</title>
+<title>Murmurmaid</title>
+<link rel="icon" href="assets/favicon.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="preload" as="image" href="assets/mermaid.webp">
+<link rel="preload" as="image" href="assets/logo.webp">
 <style>
   :root {
-    --bg: #05080d;
-    --panel: #0b121b;
-    --line: #17232f;
-    --text: #9fb3c4;
-    --dim: #5b6f80;
-    --accent: #4fb8b0;
-    --accent-dim: #1d4a4a;
+    --bg: #030a14;
+    --panel: rgba(8, 22, 38, .62);
+    --line: rgba(110, 170, 220, .16);
+    --text: #a9c3d8;
+    --dim: #6b88a0;
+    --accent: #5cc8f2;
+    --accent-dim: #1b4f74;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  html { background: var(--bg); }
+  body { margin: 0; color: var(--text); }   /* no body background: it would paint over the .bg art layer */
   body {
     font: 15px/1.4 ui-rounded, "SF Pro Rounded", system-ui, -apple-system, sans-serif;
     min-height: 100dvh;
     padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
     display: flex; justify-content: center;
   }
-  main { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 28px; }
-  header { display: flex; align-items: baseline; justify-content: space-between; }
-  h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .04em; color: var(--text); }
+  main { position: relative; width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 28px; }
+  header { display: flex; justify-content: center; }
+  h1 { margin: 0; line-height: 0; }
+  h1 img { width: min(240px, 64vw); height: auto; filter: drop-shadow(0 4px 18px rgba(0, 40, 90, .5)); }
+
+  /* Brand art: full strength on the splash, then dimmed to a bedside-dark backdrop */
+  .bg {
+    position: fixed; inset: 0; z-index: -1; overflow: hidden; background: var(--bg);
+  }
+  .bg img {
+    width: 100%; height: 100%; object-fit: cover; object-position: 50% 45%;
+    transform-origin: 50% 55%;
+  }
+  .bg::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(3, 10, 20, .74) 0%, rgba(3, 10, 20, .86) 45%, rgba(3, 10, 20, .94) 100%);
+    opacity: 0; transition: opacity 1.6s ease;
+  }
+  body.entered .bg::after { opacity: 1; }
+  body.playing .bg img { animation: drift 40s ease-in-out infinite alternate; }
+  @keyframes drift { to { transform: scale(1.07) translateY(-1.5%); } }
+
+  main, footer { transition: opacity 1.2s ease .3s; }
+  body:not(.entered) main { opacity: 0; pointer-events: none; }
+
+  #splash {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+    padding: max(14vh, env(safe-area-inset-top)) 16px max(6vh, env(safe-area-inset-bottom));
+    cursor: pointer; transition: opacity 1s ease;
+  }
+  #splash img { width: min(560px, 88vw); height: auto; filter: drop-shadow(0 6px 30px rgba(0, 30, 80, .55)); animation: rise 1.4s ease-out both; }
+  #splash span { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: rgba(230, 245, 255, .92); padding: 10px 20px; border-radius: 999px; background: rgba(3, 18, 36, .45); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); animation: rise 1.4s ease-out .6s both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+  body.entered #splash { opacity: 0; pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) {
+    body.playing .bg img, #splash img, #splash span { animation: none; }
+  }
 
   #play {
     align-self: center;
     width: 168px; height: 168px; border-radius: 50%;
     border: 1px solid var(--line);
-    background: radial-gradient(circle at 50% 40%, #0f1c27, #070c12 70%);
+    background: radial-gradient(circle at 50% 40%, rgba(16, 44, 72, .85), rgba(4, 12, 24, .9) 70%);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
     color: var(--accent);
     display: grid; place-items: center; cursor: pointer;
     transition: box-shadow .6s ease, border-color .6s ease;
   }
   #play svg { width: 56px; height: 56px; }
-  #play.on { border-color: var(--accent-dim); box-shadow: 0 0 60px -10px #1d4a4a; animation: breathe 6s ease-in-out infinite; }
-  @keyframes breathe { 50% { box-shadow: 0 0 80px -6px #1d4a4a; } }
+  #play.on { border-color: var(--accent-dim); box-shadow: 0 0 60px -10px #1b6fa0; animation: breathe 6s ease-in-out infinite; }
+  @keyframes breathe { 50% { box-shadow: 0 0 80px -6px #1b6fa0; } }
   @media (prefers-reduced-motion: reduce) { #play.on { animation: none; } }
 
   section h2 { margin: 0 0 10px; font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
@@ -49,6 +90,7 @@
     padding: 8px 14px; border-radius: 999px;
     border: 1px solid var(--line); background: var(--panel); color: var(--text);
     font: inherit; font-size: 14px; cursor: pointer;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
   }
   .chip.active { border-color: var(--accent); color: var(--accent); }
   .chip .x { color: var(--dim); font-size: 16px; line-height: 1; padding-left: 2px; }
@@ -83,9 +125,14 @@
 </style>
 </head>
 <body>
+<div class="bg" aria-hidden="true"><img src="assets/mermaid.webp" alt=""></div>
+<div id="splash" role="button" aria-label="Enter Murmurmaid">
+  <img src="assets/logo.webp" alt="Murmurmaid">
+  <span>Tap to dive in</span>
+</div>
 <main>
   <header>
-    <h1>mumurmaid</h1>
+    <h1><img src="assets/logo.webp" alt="Murmurmaid"></h1>
   </header>
 
   <button id="play" aria-label="Play">
@@ -460,32 +507,14 @@
 
   // ---------- media session (lock screen) ----------
 
-  function artwork() {
-    const c = document.createElement('canvas'); c.width = c.height = 512;
-    const g = c.getContext('2d');
-    const grad = g.createRadialGradient(256, 200, 20, 256, 256, 360);
-    grad.addColorStop(0, '#1d4a4a'); grad.addColorStop(1, '#05080d');
-    g.fillStyle = grad; g.fillRect(0, 0, 512, 512);
-    g.strokeStyle = '#4fb8b0'; g.lineWidth = 10; g.lineCap = 'round';
-    for (let r = 0; r < 3; r++) {
-      g.beginPath();
-      for (let x = 96; x <= 416; x += 4) {
-        const y = 210 + r * 50 + Math.sin((x / 320) * Math.PI * 2 + r) * 18;
-        x === 96 ? g.moveTo(x, y) : g.lineTo(x, y);
-      }
-      g.globalAlpha = 1 - r * 0.3; g.stroke();
-    }
-    return c.toDataURL('image/png');
-  }
-
   const ms = 'mediaSession' in navigator ? navigator.mediaSession : null;
-  const art = ms ? artwork() : null;
+  const art = new URL('assets/artwork-512.jpg', location.href).href;
   function updateMediaSession() {
     if (!ms) return;
     ms.metadata = new MediaMetadata({
       title: activeName || 'Custom',
-      artist: 'mumurmaid',
-      artwork: [{ src: art, sizes: '512x512', type: 'image/png' }],
+      artist: 'Murmurmaid',
+      artwork: [{ src: art, sizes: '512x512', type: 'image/jpeg' }],
     });
     ms.playbackState = playing ? 'playing' : 'paused';
   }
@@ -499,6 +528,7 @@
 
   function updatePlayUI() {
     $('play').classList.toggle('on', playing);
+    document.body.classList.toggle('playing', playing);
     $('play').setAttribute('aria-label', playing ? 'Pause' : 'Play');
     $('icon').setAttribute('d', playing ? 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z' : 'M8 5v14l11-7z');
     updateMediaSession();
@@ -578,6 +608,11 @@
     $('save-name').blur();
     persist(); renderChips(); updateMediaSession();
   });
+
+  // Splash: brand art at full strength, then it dims into the backdrop (tap skips)
+  const enter = () => document.body.classList.add('entered');
+  $('splash').addEventListener('click', enter);
+  setTimeout(enter, 2600);
 
   applyToGraph(settings, 0);
   ctx.suspend();
