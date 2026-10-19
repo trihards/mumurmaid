@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05080d">
+<meta name="color-scheme" content="dark">
+<title>mumurmaid</title>
+<style>
+  :root {
+    --bg: #05080d;
+    --panel: #0b121b;
+    --line: #17232f;
+    --text: #9fb3c4;
+    --dim: #5b6f80;
+    --accent: #4fb8b0;
+    --accent-dim: #1d4a4a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.4 ui-rounded, "SF Pro Rounded", system-ui, -apple-system, sans-serif;
+    min-height: 100dvh;
+    padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+    display: flex; justify-content: center;
+  }
+  main { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 28px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; }
+  h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .04em; color: var(--text); }
+  #status { font-size: 12px; color: var(--dim); }
+
+  #play {
+    align-self: center;
+    width: 168px; height: 168px; border-radius: 50%;
+    border: 1px solid var(--line);
+    background: radial-gradient(circle at 50% 40%, #0f1c27, #070c12 70%);
+    color: var(--accent);
+    display: grid; place-items: center; cursor: pointer;
+    transition: box-shadow .6s ease, border-color .6s ease;
+  }
+  #play svg { width: 56px; height: 56px; }
+  #play.on { border-color: var(--accent-dim); box-shadow: 0 0 60px -10px #1d4a4a; animation: breathe 6s ease-in-out infinite; }
+  @keyframes breathe { 50% { box-shadow: 0 0 80px -6px #1d4a4a; } }
+  @media (prefers-reduced-motion: reduce) { #play.on { animation: none; } }
+
+  section h2 { margin: 0 0 10px; font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text);
+    font: inherit; font-size: 14px; cursor: pointer;
+  }
+  .chip.active { border-color: var(--accent); color: var(--accent); }
+  .chip .x { color: var(--dim); font-size: 16px; line-height: 1; padding-left: 2px; }
+  .empty { font-size: 13px; color: var(--dim); }
+
+  .slider { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin-bottom: 18px; }
+  .slider label { font-size: 14px; }
+  .slider output { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  input[type=range] {
+    grid-column: 1 / -1; width: 100%; margin: 6px 0 0;
+    -webkit-appearance: none; appearance: none; background: transparent; height: 28px;
+  }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--line); }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line); }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 24px; height: 24px; margin-top: -10px;
+    border-radius: 50%; background: var(--accent); border: 4px solid var(--bg);
+  }
+  input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 4px solid var(--bg); }
+
+  form { display: flex; gap: 8px; }
+  form input {
+    flex: 1; min-width: 0; padding: 10px 14px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit;
+  }
+  form input::placeholder { color: var(--dim); }
+  form button {
+    padding: 10px 18px; border-radius: 999px; border: 1px solid var(--accent-dim);
+    background: transparent; color: var(--accent); font: inherit; cursor: pointer;
+  }
+  footer { font-size: 12px; color: var(--dim); text-align: center; line-height: 1.6; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>mumurmaid</h1>
+    <span id="status"></span>
+  </header>
+
+  <button id="play" aria-label="Play">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path id="icon" d="M8 5v14l11-7z"/></svg>
+  </button>
+
+  <section>
+    <h2>Presets</h2>
+    <div class="chips" id="presets"></div>
+  </section>
+
+  <section>
+    <h2>Shape</h2>
+    <div class="slider">
+      <label for="color">Color</label><output id="color-out"></output>
+      <input id="color" type="range" min="0" max="100">
+    </div>
+    <div class="slider">
+      <label for="pitch">Pitch</label><output id="pitch-out"></output>
+      <input id="pitch" type="range" min="0" max="100">
+    </div>
+    <div class="slider">
+      <label for="depth">Waves</label><output id="depth-out"></output>
+      <input id="depth" type="range" min="0" max="100">
+    </div>
+    <div class="slider">
+      <label for="speed">Speed</label><output id="speed-out"></output>
+      <input id="speed" type="range" min="0" max="100">
+    </div>
+  </section>
+
+  <section>
+    <h2>My sounds</h2>
+    <div class="chips" id="saved"></div>
+    <form id="save-form" style="margin-top:12px">
+      <input id="save-name" placeholder="Name this sound" maxlength="24" autocomplete="off">
+      <button type="submit">Save</button>
+    </form>
+  </section>
+
+  <footer>Use your phone's volume buttons. Keeps playing when locked.<br>Controls also appear on the lock screen.</footer>
+</main>
+
+<script>
+(() => {
+  const SR = 24000;          // sample rate of the rendered loop
+  const LOOP_SEC = 120;      // long loop so any browser loop seam is rare
+  const FADE_SEC = 2;        // crossfade that makes the loop seamless
+  const STORE_KEY = 'mumurmaid.v1';
+
+  const PRESETS = [
+    { name: 'White',    color: 0,   pitch: 100, depth: 0,  speed: 50 },
+    { name: 'Pink',     color: 50,  pitch: 90,  depth: 0,  speed: 50 },
+    { name: 'Brown',    color: 100, pitch: 62,  depth: 0,  speed: 50 },
+    { name: 'Rain',     color: 38,  pitch: 78,  depth: 12, speed: 80 },
+    { name: 'Ocean',    color: 72,  pitch: 55,  depth: 80, speed: 32 },
+    { name: 'Fan',      color: 58,  pitch: 38,  depth: 4,  speed: 95 },
+    { name: 'Deep sea', color: 100, pitch: 22,  depth: 55, speed: 12 },
+  ];
+
+  // Slider value (0-100) -> physical parameter
+  const cutoffHz = p => Math.min(150 * Math.pow(11000 / 150, p / 100), SR * 0.45);
+  const waveHz   = s => 0.03 * Math.pow(0.6 / 0.03, s / 100);
+
+  // ---------- noise rendering ----------
+
+  // Fills `out` with a blend of white / pink / brown noise (weights m0..m2).
+  // Everything is local variables in one loop: closures over mutable doubles
+  // are several times slower in JS engines.
+  function fillNoise(out, m0, m1, m2) {
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, brown = 0;
+    let seed = (Math.random() * 0xffffffff) | 1;
+    for (let i = 0, n = out.length; i < n; i++) {
+      seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;   // xorshift32
+      const w = seed / 2147483648;
+      // Paul Kellet's pink filter
+      b0 = 0.99886 * b0 + w * 0.0555179;
+      b1 = 0.99332 * b1 + w * 0.0750759;
+      b2 = 0.96900 * b2 + w * 0.1538520;
+      b3 = 0.86650 * b3 + w * 0.3104856;
+      b4 = 0.55000 * b4 + w * 0.5329522;
+      b5 = -0.7616 * b5 - w * 0.0168980;
+      const pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362;
+      b6 = w * 0.115926;
+      brown = (brown + 0.02 * w) / 1.02;
+      out[i] = w * m0 + pink * m1 + brown * m2;
+    }
+  }
+
+  // In-place 2-pole lowpass (RBJ cookbook, Q = 0.707)
+  function lowpass(buf, freq) {
+    const w0 = 2 * Math.PI * freq / SR, cos = Math.cos(w0), alpha = Math.sin(w0) / (2 * Math.SQRT1_2);
+    const a0 = 1 + alpha;
+    const b0 = (1 - cos) / 2 / a0, b1 = (1 - cos) / a0, b2 = b0;
+    const a1 = -2 * cos / a0, a2 = (1 - alpha) / a0;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0, n = buf.length; i < n; i++) {
+      const x = buf[i];
+      const y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+      x2 = x1; x1 = x; y2 = y1; y1 = y;
+      buf[i] = y;
+    }
+  }
+
+  // In-place 1-pole highpass
+  function highpass(buf, freq) {
+    const a = Math.exp(-2 * Math.PI * freq / SR);
+    let px = 0, py = 0;
+    for (let i = 0, n = buf.length; i < n; i++) {
+      const x = buf[i];
+      py = a * (py + x - px); px = x;
+      buf[i] = py;
+    }
+  }
+
+  function render(s) {
+    const N = SR * LOOP_SEC, F = SR * FADE_SEC;
+    const total = N + F;
+
+    // Calibrate so white/pink/brown blend at equal loudness
+    const probe = new Float32Array(SR);
+    const gain = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map(w => {
+      fillNoise(probe, ...w);
+      let sum = 0;
+      for (let i = 0; i < SR; i++) sum += probe[i] * probe[i];
+      return 1 / Math.sqrt(sum / SR);
+    });
+
+    const c = s.color / 100;
+    const mix = c < 0.5 ? [1 - c * 2, c * 2, 0] : [0, 2 - c * 2, c * 2 - 1];
+    const m = mix.map((v, k) => v * gain[k]);
+
+    const raw = new Float32Array(total);
+    fillNoise(raw, ...m);
+    lowpass(raw, cutoffHz(s.pitch));
+    lowpass(raw, cutoffHz(s.pitch));   // cascaded: 24 dB/oct makes Pitch clearly audible
+    highpass(raw, 25);                 // gentle DC / rumble cut
+
+    // Seamless loop: fold the tail into the head with an equal-power crossfade
+    const out = new Float32Array(N);
+    for (let i = 0; i < N; i++) out[i] = raw[i];
+    for (let i = 0; i < F; i++) {
+      const t = (i / F) * Math.PI / 2;
+      out[i] = raw[N + i] * Math.cos(t) + raw[i] * Math.sin(t);
+    }
+
+    // Wave swell: whole number of cycles per loop so it also loops cleanly.
+    // Envelope computed every 64 samples and interpolated (it's sub-1 Hz).
+    const d = s.depth / 100;
+    if (d > 0) {
+      const c1 = Math.max(1, Math.round(waveHz(s.speed) * LOOP_SEC));
+      const c2 = Math.max(1, Math.round(c1 * 1.618));
+      const env = ph => {
+        const a = Math.pow((1 - Math.cos(2 * Math.PI * c1 * ph)) / 2, 1.5);
+        const b = (1 - Math.cos(2 * Math.PI * c2 * ph + 1.3)) / 2;
+        return (1 - d) + d * (0.75 * a + 0.25 * b);
+      };
+      const STEP = 64;
+      for (let j = 0; j < N; j += STEP) {
+        const e0 = env(j / N), e1 = env(Math.min(j + STEP, N) / N);
+        const end = Math.min(j + STEP, N);
+        for (let i = j; i < end; i++) out[i] *= e0 + (e1 - e0) * (i - j) / STEP;
+      }
+    }
+
+    // Normalize to a comfortable RMS so presets sit at similar loudness, without clipping
+    let sum = 0, peak = 0;
+    for (let i = 0; i < N; i++) { sum += out[i] * out[i]; peak = Math.max(peak, Math.abs(out[i])); }
+    const k = Math.min(0.16 / Math.sqrt(sum / N || 1), 0.95 / (peak || 1));
+    return encodeWav(out, k);
+  }
+
+  function encodeWav(samples, k) {
+    const n = samples.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE');
+    str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, SR, true); v.setUint32(28, SR * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, 'data'); v.setUint32(40, n * 2, true);
+    for (let i = 0, o = 44; i < n; i++, o += 2) {
+      const x = Math.max(-1, Math.min(1, samples[i] * k));
+      v.setInt16(o, x * 32767, true);
+    }
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+
+  // ---------- state ----------
+
+  const $ = id => document.getElementById(id);
+  const sliders = ['color', 'pitch', 'depth', 'speed'];
+  const store = (() => {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
+  })();
+  let settings = { color: 50, pitch: 90, depth: 0, speed: 50, ...(store.current || {}) };
+  let saved = Array.isArray(store.saved) ? store.saved : [];
+  let activeName = store.activeName ?? 'Pink';
+
+  function persist() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ current: settings, saved, activeName })); } catch {}
+  }
+
+  // ---------- audio ----------
+
+  const audio = new Audio();
+  audio.loop = true;
+  audio.preload = 'auto';
+  audio.setAttribute('playsinline', '');
+  let url = null, renderedKey = null, playing = false;
+
+  const keyOf = s => sliders.map(k => s[k]).join(',');
+
+  function ensureRendered() {
+    const key = keyOf(settings);
+    if (key === renderedKey) return false;
+    const blob = render(settings);
+    if (url) URL.revokeObjectURL(url);
+    url = URL.createObjectURL(blob);
+    audio.src = url;
+    renderedKey = key;
+    return true;
+  }
+
+  async function play() {
+    ensureRendered();
+    try {
+      await audio.play();
+    } catch (e) {
+      setStatus('Tap play to start');
+      return;
+    }
+  }
+
+  function pause() { audio.pause(); }
+
+  audio.addEventListener('playing', () => { playing = true; updatePlayUI(); });
+  audio.addEventListener('pause', () => { playing = false; updatePlayUI(); });
+
+  let reRenderTimer = null;
+  function scheduleRerender() {
+    clearTimeout(reRenderTimer);
+    reRenderTimer = setTimeout(() => {
+      if (playing) {
+        setStatus('…');
+        // let the status paint before the synchronous render
+        requestAnimationFrame(() => setTimeout(() => {
+          ensureRendered();
+          audio.play().catch(() => {});
+          setStatus('');
+        }, 0));
+      }
+    }, 300);
+  }
+
+  // ---------- media session (lock screen) ----------
+
+  function artwork() {
+    const c = document.createElement('canvas'); c.width = c.height = 512;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(256, 200, 20, 256, 256, 360);
+    grad.addColorStop(0, '#1d4a4a'); grad.addColorStop(1, '#05080d');
+    g.fillStyle = grad; g.fillRect(0, 0, 512, 512);
+    g.strokeStyle = '#4fb8b0'; g.lineWidth = 10; g.lineCap = 'round';
+    for (let r = 0; r < 3; r++) {
+      g.beginPath();
+      for (let x = 96; x <= 416; x += 4) {
+        const y = 210 + r * 50 + Math.sin((x / 320) * Math.PI * 2 + r) * 18;
+        x === 96 ? g.moveTo(x, y) : g.lineTo(x, y);
+      }
+      g.globalAlpha = 1 - r * 0.3; g.stroke();
+    }
+    return c.toDataURL('image/png');
+  }
+
+  const ms = 'mediaSession' in navigator ? navigator.mediaSession : null;
+  const art = ms ? artwork() : null;
+  function updateMediaSession() {
+    if (!ms) return;
+    ms.metadata = new MediaMetadata({
+      title: activeName || 'Custom',
+      artist: 'mumurmaid',
+      artwork: [{ src: art, sizes: '512x512', type: 'image/png' }],
+    });
+    ms.playbackState = playing ? 'playing' : 'paused';
+  }
+  if (ms) {
+    ms.setActionHandler('play', play);
+    ms.setActionHandler('pause', pause);
+    try { ms.setActionHandler('stop', pause); } catch {}
+  }
+
+  // ---------- UI ----------
+
+  function setStatus(t) { $('status').textContent = t; }
+
+  function updatePlayUI() {
+    $('play').classList.toggle('on', playing);
+    $('play').setAttribute('aria-label', playing ? 'Pause' : 'Play');
+    $('icon').setAttribute('d', playing ? 'M7 5h3.5v14H7zM13.5 5H17v14h-3.5z' : 'M8 5v14l11-7z');
+    updateMediaSession();
+  }
+
+  function describe() {
+    const c = settings.color;
+    $('color-out').textContent = c < 17 ? 'white' : c < 40 ? 'white-pink' : c < 60 ? 'pink' : c < 83 ? 'pink-brown' : 'brown';
+    const hz = cutoffHz(settings.pitch);
+    $('pitch-out').textContent = hz >= 1000 ? (hz / 1000).toFixed(1) + ' kHz' : Math.round(hz) + ' Hz';
+    $('depth-out').textContent = settings.depth === 0 ? 'steady' : settings.depth + '%';
+    const period = LOOP_SEC / Math.max(1, Math.round(waveHz(settings.speed) * LOOP_SEC));
+    $('speed-out').textContent = settings.depth === 0 ? '—' : 'every ' + (period < 10 ? period.toFixed(1) : Math.round(period)) + 's';
+    $('speed').disabled = settings.depth === 0;
+    $('speed').parentElement.style.opacity = settings.depth === 0 ? 0.4 : 1;
+  }
+
+  function chip(label, active, onClick, onDelete) {
+    const b = document.createElement('button');
+    b.className = 'chip' + (active ? ' active' : '');
+    b.type = 'button';
+    b.textContent = label;
+    b.addEventListener('click', onClick);
+    if (onDelete) {
+      const x = document.createElement('span');
+      x.className = 'x'; x.textContent = '×'; x.setAttribute('aria-label', 'Delete ' + label);
+      x.addEventListener('click', e => { e.stopPropagation(); onDelete(); });
+      b.append(x);
+    }
+    return b;
+  }
+
+  function renderChips() {
+    const matches = p => keyOf(p) === keyOf(settings);
+    const pr = $('presets'); pr.replaceChildren();
+    PRESETS.forEach(p => pr.append(chip(p.name, matches(p) && activeName === p.name, () => apply(p))));
+    const sv = $('saved'); sv.replaceChildren();
+    if (!saved.length) {
+      const e = document.createElement('span'); e.className = 'empty';
+      e.textContent = 'Dial something in, then save it here.';
+      sv.append(e);
+    }
+    saved.forEach((p, i) => sv.append(chip(p.name, matches(p) && activeName === p.name, () => apply(p), () => {
+      saved.splice(i, 1); persist(); renderChips();
+    })));
+  }
+
+  function syncSliders() { sliders.forEach(k => { $(k).value = settings[k]; }); describe(); }
+
+  function apply(p) {
+    sliders.forEach(k => { settings[k] = p[k]; });
+    activeName = p.name;
+    syncSliders(); renderChips(); persist(); updateMediaSession();
+    scheduleRerender();
+  }
+
+  sliders.forEach(k => $(k).addEventListener('input', e => {
+    settings[k] = +e.target.value;
+    activeName = 'Custom';
+    describe(); renderChips(); persist(); updateMediaSession();
+    scheduleRerender();
+  }));
+
+  $('play').addEventListener('click', () => (playing ? pause() : play()));
+
+  $('save-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const name = $('save-name').value.trim() || 'Sound ' + (saved.length + 1);
+    const entry = { name };
+    sliders.forEach(k => { entry[k] = settings[k]; });
+    const existing = saved.findIndex(p => p.name.toLowerCase() === name.toLowerCase());
+    if (existing >= 0) saved[existing] = entry; else saved.push(entry);
+    activeName = name;
+    $('save-name').value = '';
+    $('save-name').blur();
+    persist(); renderChips(); updateMediaSession();
+  });
+
+  syncSliders();
+  renderChips();
+  updatePlayUI();
+  // Pre-render so the first tap starts instantly (and stays inside the user gesture on iOS)
+  ensureRendered();
+})();
+</script>
+</body>
+</html>
