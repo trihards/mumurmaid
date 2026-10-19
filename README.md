@@ -7,4 +7,4 @@ A single-file white-noise page for sleeping. Open `index.html` (or host it on Gi
 - Shape the sound with Color (white → pink → brown), Pitch, Waves (swell depth) and Speed (swell rate).
 - Save your own sounds; they live in the browser's local storage on that device.
 
-How it works: the noise is rendered in JavaScript into a seamless two-minute WAV loop and played through a plain `<audio>` element, rather than live Web Audio, because mobile browsers keep media elements running in the background and route them through the system volume.
+How it works: three seamless noise loops (white, pink, brown) play through Web Audio, which loops sample-accurately, so there's no seam. Colour, pitch and waves are live gains, filters and LFOs, so every change glides instead of restarting. A silent looping `<audio>` element runs alongside: that's what the phone sees as "media playing", which gives you lock-screen controls and keeps the page from being suspended. On Safari the page also asks for the `playback` audio session, so the silent switch doesn't mute it.

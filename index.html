@@ -27,7 +27,6 @@
   main { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 28px; }
   header { display: flex; align-items: baseline; justify-content: space-between; }
   h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .04em; color: var(--text); }
-  #status { font-size: 12px; color: var(--dim); }
 
   #play {
     align-self: center;
@@ -87,7 +86,6 @@
 <main>
   <header>
     <h1>mumurmaid</h1>
-    <span id="status"></span>
   </header>
 
   <button id="play" aria-label="Play">
@@ -133,9 +131,6 @@
 
 <script>
 (() => {
-  const SR = 24000;          // sample rate of the rendered loop
-  const LOOP_SEC = 120;      // long loop so any browser loop seam is rare
-  const FADE_SEC = 2;        // crossfade that makes the loop seamless
   const STORE_KEY = 'mumurmaid.v1';
 
   const PRESETS = [
@@ -148,11 +143,22 @@
     { name: 'Deep sea', color: 100, pitch: 22,  depth: 55, speed: 12 },
   ];
 
-  // Slider value (0-100) -> physical parameter
-  const cutoffHz = p => Math.min(150 * Math.pow(11000 / 150, p / 100), SR * 0.45);
-  const waveHz   = s => 0.03 * Math.pow(0.6 / 0.03, s / 100);
+  // Audio runs live through Web Audio: looped buffers are sample-accurate (no seam)
+  // and every control is an AudioParam, so changes glide instead of reloading.
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AC({ latencyHint: 'playback' });
+  const SR = ctx.sampleRate;
+  // Safari: treat this page as media playback (keeps going when locked, ignores the silent switch)
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
 
-  // ---------- noise rendering ----------
+  // Slider value (0-100) -> physical parameter
+  const cutoffHz  = p => Math.min(150 * Math.pow(11000 / 150, p / 100), SR * 0.45);
+  const waveHz    = s => 0.03 * Math.pow(0.6 / 0.03, s / 100);
+  const colorMix  = v => { const c = v / 100; return c < 0.5 ? [1 - c * 2, c * 2, 0] : [0, 2 - c * 2, c * 2 - 1]; };
+  const HP_HZ = 25;
+  const BROWN_HZ = SR * 0.0198 / (2 * Math.PI);   // corner of the brown integrator below
+
+  // ---------- noise sources ----------
 
   // Fills `out` with a blend of white / pink / brown noise (weights m0..m2).
   // Everything is local variables in one loop: closures over mutable doubles
@@ -177,21 +183,6 @@
     }
   }
 
-  // In-place 2-pole lowpass (RBJ cookbook, Q = 0.707)
-  function lowpass(buf, freq) {
-    const w0 = 2 * Math.PI * freq / SR, cos = Math.cos(w0), alpha = Math.sin(w0) / (2 * Math.SQRT1_2);
-    const a0 = 1 + alpha;
-    const b0 = (1 - cos) / 2 / a0, b1 = (1 - cos) / a0, b2 = b0;
-    const a1 = -2 * cos / a0, a2 = (1 - alpha) / a0;
-    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-    for (let i = 0, n = buf.length; i < n; i++) {
-      const x = buf[i];
-      const y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-      x2 = x1; x1 = x; y2 = y1; y1 = y;
-      buf[i] = y;
-    }
-  }
-
   // In-place 1-pole highpass
   function highpass(buf, freq) {
     const a = Math.exp(-2 * Math.PI * freq / SR);
@@ -203,75 +194,115 @@
     }
   }
 
-  function render(s) {
-    const N = SR * LOOP_SEC, F = SR * FADE_SEC;
-    const total = N + F;
-
-    // Calibrate so white/pink/brown blend at equal loudness
-    const probe = new Float32Array(SR);
-    const gain = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map(w => {
-      fillNoise(probe, ...w);
-      let sum = 0;
-      for (let i = 0; i < SR; i++) sum += probe[i] * probe[i];
-      return 1 / Math.sqrt(sum / SR);
-    });
-
-    const c = s.color / 100;
-    const mix = c < 0.5 ? [1 - c * 2, c * 2, 0] : [0, 2 - c * 2, c * 2 - 1];
-    const m = mix.map((v, k) => v * gain[k]);
-
-    const raw = new Float32Array(total);
-    fillNoise(raw, ...m);
-    lowpass(raw, cutoffHz(s.pitch));
-    lowpass(raw, cutoffHz(s.pitch));   // cascaded: 24 dB/oct makes Pitch clearly audible
-    highpass(raw, 25);                 // gentle DC / rumble cut
-
-    // Seamless loop: fold the tail into the head with an equal-power crossfade
-    const out = new Float32Array(N);
-    for (let i = 0; i < N; i++) out[i] = raw[i];
+  // A seamless, unit-RMS noise loop: the tail is folded into the head with an
+  // equal-power crossfade so the wrap point is indistinguishable from the rest.
+  function noiseLoop(seconds, weights) {
+    const N = Math.round(SR * seconds), F = SR * 2;
+    const raw = new Float32Array(N + F);
+    fillNoise(raw, ...weights);
+    highpass(raw, HP_HZ);
     for (let i = 0; i < F; i++) {
       const t = (i / F) * Math.PI / 2;
-      out[i] = raw[N + i] * Math.cos(t) + raw[i] * Math.sin(t);
+      raw[i] = raw[N + i] * Math.cos(t) + raw[i] * Math.sin(t);
     }
-
-    // Wave swell: whole number of cycles per loop so it also loops cleanly.
-    // Envelope computed every 64 samples and interpolated (it's sub-1 Hz).
-    const d = s.depth / 100;
-    if (d > 0) {
-      const c1 = Math.max(1, Math.round(waveHz(s.speed) * LOOP_SEC));
-      const c2 = Math.max(1, Math.round(c1 * 1.618));
-      const env = ph => {
-        const a = Math.pow((1 - Math.cos(2 * Math.PI * c1 * ph)) / 2, 1.5);
-        const b = (1 - Math.cos(2 * Math.PI * c2 * ph + 1.3)) / 2;
-        return (1 - d) + d * (0.75 * a + 0.25 * b);
-      };
-      const STEP = 64;
-      for (let j = 0; j < N; j += STEP) {
-        const e0 = env(j / N), e1 = env(Math.min(j + STEP, N) / N);
-        const end = Math.min(j + STEP, N);
-        for (let i = j; i < end; i++) out[i] *= e0 + (e1 - e0) * (i - j) / STEP;
-      }
-    }
-
-    // Normalize to a comfortable RMS so presets sit at similar loudness, without clipping
-    let sum = 0, peak = 0;
-    for (let i = 0; i < N; i++) { sum += out[i] * out[i]; peak = Math.max(peak, Math.abs(out[i])); }
-    const k = Math.min(0.16 / Math.sqrt(sum / N || 1), 0.95 / (peak || 1));
-    return encodeWav(out, k);
+    let sum = 0;
+    for (let i = F; i < N; i++) sum += raw[i] * raw[i];
+    const k = 1 / Math.sqrt(sum / (N - F));
+    const buf = ctx.createBuffer(1, N, SR);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < N; i++) ch[i] = raw[i] * k;
+    return buf;
   }
 
-  function encodeWav(samples, k) {
-    const n = samples.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
-    const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-    str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE');
-    str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-    v.setUint32(24, SR, true); v.setUint32(28, SR * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-    str(36, 'data'); v.setUint32(40, n * 2, true);
-    for (let i = 0, o = 44; i < n; i++, o += 2) {
-      const x = Math.max(-1, Math.min(1, samples[i] * k));
-      v.setInt16(o, x * 32767, true);
+  // Loudness compensation: estimate the output RMS of the colour blend through
+  // the filters from their spectra, and return the gain that hits a fixed level.
+  const SHAPES = [f => 1, f => 1 / f, f => 1 / (f * f + BROWN_HZ * BROWN_HZ)];
+  function levelFor(s) {
+    const fc = cutoffHz(s.pitch), nyq = SR / 2, mix = colorMix(s.color);
+    let power = 0;
+    mix.forEach((m, k) => {
+      if (!m) return;
+      let num = 0, den = 0;
+      for (let i = 0; i < 240; i++) {
+        const f = 5 * Math.pow(nyq / 5, i / 239);   // log grid, so df ∝ f
+        const hp = (f / HP_HZ) ** 2 / (1 + (f / HP_HZ) ** 2);
+        const lp = 1 / (1 + (f / fc) ** 4);           // one 2-pole Butterworth, |H|²
+        const p = SHAPES[k](f) * hp * f;
+        den += p; num += p * lp * lp;
+      }
+      power += m * m * num / den;
+    });
+    return 0.15 / Math.sqrt(power || 1e-9);
+  }
+
+  // ---------- graph ----------
+  // [white|pink|brown] -> colour gains -> lowpass x2 -> level -> wave -> master -> out
+  // two LFOs push wave.gain around for the swell
+
+  const BUTTERWORTH_Q_DB = -3.0103;   // Web Audio's lowpass Q is in dB; this is Q = 0.707
+  const master = ctx.createGain(); master.gain.value = 0;
+  master.connect(ctx.destination);
+  const wave = ctx.createGain(); wave.connect(master);
+  const level = ctx.createGain(); level.connect(wave);
+  const lp2 = ctx.createBiquadFilter(); lp2.type = 'lowpass'; lp2.Q.value = BUTTERWORTH_Q_DB; lp2.connect(level);
+  const lp1 = ctx.createBiquadFilter(); lp1.type = 'lowpass'; lp1.Q.value = BUTTERWORTH_Q_DB; lp1.connect(lp2);
+
+  // Loop lengths are coprime-ish so the three loops never line up audibly
+  const colorGains = [[1, 0, 0, 31], [0, 1, 0, 37], [0, 0, 1, 41]].map(([a, b, c, secs]) => {
+    const g = ctx.createGain(); g.gain.value = 0; g.connect(lp1);
+    const src = ctx.createBufferSource();
+    src.buffer = noiseLoop(secs, [a, b, c]);
+    src.loop = true;
+    src.connect(g);
+    src.start(0, Math.random() * secs);
+    return g;
+  });
+
+  // Main swell: a crest-shaped periodic wave, ((1 - cos) / 2)^1.5, built from its harmonics
+  const CREST_MEAN = (() => {
+    let m = 0; for (let j = 0; j < 1024; j++) m += Math.pow((1 - Math.cos(2 * Math.PI * j / 1024)) / 2, 1.5);
+    return m / 1024;
+  })();
+  const crest = (() => {
+    const H = 12, M = 1024, real = new Float32Array(H + 1), imag = new Float32Array(H + 1);
+    for (let n = 1; n <= H; n++) {
+      let a = 0;
+      for (let j = 0; j < M; j++) {
+        const ph = j / M;
+        a += Math.pow((1 - Math.cos(2 * Math.PI * ph)) / 2, 1.5) * Math.cos(2 * Math.PI * n * ph);
+      }
+      real[n] = (2 * a) / M;
     }
-    return new Blob([buf], { type: 'audio/wav' });
+    return ctx.createPeriodicWave(real, imag, { disableNormalization: true });
+  })();
+  const lfo1 = ctx.createOscillator(); lfo1.setPeriodicWave(crest);
+  const lfo2 = ctx.createOscillator();   // slower-drifting sine so swells aren't metronomic
+  const depth1 = ctx.createGain(), depth2 = ctx.createGain();
+  depth1.gain.value = depth2.gain.value = 0;
+  lfo1.connect(depth1).connect(wave.gain);
+  lfo2.connect(depth2).connect(wave.gain);
+  lfo1.start(); lfo2.start();
+
+  // Push settings into the graph. `glide` smooths slider moves; 0 jumps.
+  function applyToGraph(s, glide = 0.12) {
+    const t = ctx.currentTime;
+    const set = (param, v) => {
+      param.cancelScheduledValues(t);
+      if (glide) param.setTargetAtTime(v, t, glide); else param.setValueAtTime(v, t);
+    };
+    colorMix(s.color).forEach((m, k) => set(colorGains[k].gain, m));
+    set(lp1.frequency, cutoffHz(s.pitch));
+    set(lp2.frequency, cutoffHz(s.pitch));
+    // envelope = (1 - d) + d * (0.75 * crest + 0.25 * (1 - cos) / 2), as base + LFO terms
+    const d = s.depth / 100, hz = waveHz(s.speed);
+    const base = 1 - d + d * (0.75 * CREST_MEAN + 0.25 * 0.5);
+    // troughs make wavy sounds quieter on average; make up half of that (in dB) without clipping crests
+    set(level.gain, levelFor(s) / Math.sqrt(base));
+    set(wave.gain, base);
+    set(depth1.gain, 0.75 * d);
+    set(depth2.gain, 0.125 * d);
+    set(lfo1.frequency, hz);
+    set(lfo2.frequency, hz * 0.382);
   }
 
   // ---------- state ----------
@@ -284,62 +315,65 @@
   let settings = { color: 50, pitch: 90, depth: 0, speed: 50, ...(store.current || {}) };
   let saved = Array.isArray(store.saved) ? store.saved : [];
   let activeName = store.activeName ?? 'Pink';
+  const keyOf = s => sliders.map(k => s[k]).join(',');
 
   function persist() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify({ current: settings, saved, activeName })); } catch {}
   }
 
-  // ---------- audio ----------
+  // ---------- play / pause ----------
+  // A silent looping <audio> element runs alongside Web Audio. It's what the OS
+  // sees as "media playing": it owns the lock-screen controls and keeps mobile
+  // browsers from suspending the page. It's silent, so its own loop gap is inaudible.
 
-  const audio = new Audio();
-  audio.loop = true;
-  audio.preload = 'auto';
-  audio.setAttribute('playsinline', '');
-  let url = null, renderedKey = null, playing = false;
+  function silentWav() {
+    const n = 8000, buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE');
+    str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+    str(36, 'data'); v.setUint32(40, n, true);
+    for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);   // 8-bit silence
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+  const keepAlive = new Audio(silentWav());
+  keepAlive.loop = true;
+  keepAlive.setAttribute('playsinline', '');
 
-  const keyOf = s => sliders.map(k => s[k]).join(',');
+  let playing = false, suspendTimer = null;
 
-  function ensureRendered() {
-    const key = keyOf(settings);
-    if (key === renderedKey) return false;
-    const blob = render(settings);
-    if (url) URL.revokeObjectURL(url);
-    url = URL.createObjectURL(blob);
-    audio.src = url;
-    renderedKey = key;
-    return true;
+  function play() {
+    if (playing) return;
+    playing = true;
+    clearTimeout(suspendTimer);
+    keepAlive.play().catch(() => {});
+    ctx.resume();
+    const t = ctx.currentTime;
+    master.gain.cancelScheduledValues(t);
+    master.gain.setValueAtTime(master.gain.value, t);
+    master.gain.linearRampToValueAtTime(1, t + 1.5);   // gentle fade-in
+    updatePlayUI();
   }
 
-  async function play() {
-    ensureRendered();
-    try {
-      await audio.play();
-    } catch (e) {
-      setStatus('Tap play to start');
-      return;
-    }
+  function pause() {
+    if (!playing) return;
+    playing = false;
+    const t = ctx.currentTime;
+    master.gain.cancelScheduledValues(t);
+    master.gain.setValueAtTime(master.gain.value, t);
+    master.gain.linearRampToValueAtTime(0, t + 0.4);
+    suspendTimer = setTimeout(() => { if (!playing) ctx.suspend(); }, 500);
+    keepAlive.pause();
+    updatePlayUI();
   }
 
-  function pause() { audio.pause(); }
+  // Headphones unplugged, a call came in, etc.: the OS pauses the media element
+  keepAlive.addEventListener('pause', () => { if (playing) pause(); });
 
-  audio.addEventListener('playing', () => { playing = true; updatePlayUI(); });
-  audio.addEventListener('pause', () => { playing = false; updatePlayUI(); });
-
-  let reRenderTimer = null;
-  function scheduleRerender() {
-    clearTimeout(reRenderTimer);
-    reRenderTimer = setTimeout(() => {
-      if (playing) {
-        setStatus('…');
-        // let the status paint before the synchronous render
-        requestAnimationFrame(() => setTimeout(() => {
-          ensureRendered();
-          audio.play().catch(() => {});
-          setStatus('');
-        }, 0));
-      }
-    }, 300);
-  }
+  // Phone calls / Siri can interrupt the context; pick back up afterwards
+  const revive = () => { if (playing && ctx.state !== 'running') ctx.resume().catch(() => {}); };
+  ctx.addEventListener('statechange', revive);
+  document.addEventListener('visibilitychange', revive);
 
   // ---------- media session (lock screen) ----------
 
@@ -380,8 +414,6 @@
 
   // ---------- UI ----------
 
-  function setStatus(t) { $('status').textContent = t; }
-
   function updatePlayUI() {
     $('play').classList.toggle('on', playing);
     $('play').setAttribute('aria-label', playing ? 'Pause' : 'Play');
@@ -395,7 +427,7 @@
     const hz = cutoffHz(settings.pitch);
     $('pitch-out').textContent = hz >= 1000 ? (hz / 1000).toFixed(1) + ' kHz' : Math.round(hz) + ' Hz';
     $('depth-out').textContent = settings.depth === 0 ? 'steady' : settings.depth + '%';
-    const period = LOOP_SEC / Math.max(1, Math.round(waveHz(settings.speed) * LOOP_SEC));
+    const period = 1 / waveHz(settings.speed);
     $('speed-out').textContent = settings.depth === 0 ? '—' : 'every ' + (period < 10 ? period.toFixed(1) : Math.round(period)) + 's';
     $('speed').disabled = settings.depth === 0;
     $('speed').parentElement.style.opacity = settings.depth === 0 ? 0.4 : 1;
@@ -437,14 +469,14 @@
     sliders.forEach(k => { settings[k] = p[k]; });
     activeName = p.name;
     syncSliders(); renderChips(); persist(); updateMediaSession();
-    scheduleRerender();
+    applyToGraph(settings, 0.4);   // presets crossfade a little slower
   }
 
   sliders.forEach(k => $(k).addEventListener('input', e => {
     settings[k] = +e.target.value;
     activeName = 'Custom';
     describe(); renderChips(); persist(); updateMediaSession();
-    scheduleRerender();
+    applyToGraph(settings);
   }));
 
   $('play').addEventListener('click', () => (playing ? pause() : play()));
@@ -462,11 +494,11 @@
     persist(); renderChips(); updateMediaSession();
   });
 
+  applyToGraph(settings, 0);
+  ctx.suspend();
   syncSliders();
   renderChips();
   updatePlayUI();
-  // Pre-render so the first tap starts instantly (and stays inside the user gesture on iOS)
-  ensureRendered();
 })();
 </script>
 </body>
