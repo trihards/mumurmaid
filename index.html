@@ -108,6 +108,10 @@
       <input id="pitch" type="range" min="0" max="100">
     </div>
     <div class="slider">
+      <label for="drops">Drops</label><output id="drops-out"></output>
+      <input id="drops" type="range" min="0" max="100">
+    </div>
+    <div class="slider">
       <label for="depth">Waves</label><output id="depth-out"></output>
       <input id="depth" type="range" min="0" max="100">
     </div>
@@ -134,13 +138,15 @@
   const STORE_KEY = 'mumurmaid.v1';
 
   const PRESETS = [
-    { name: 'White',    color: 0,   pitch: 100, depth: 0,  speed: 50 },
-    { name: 'Pink',     color: 50,  pitch: 90,  depth: 0,  speed: 50 },
-    { name: 'Brown',    color: 100, pitch: 62,  depth: 0,  speed: 50 },
-    { name: 'Rain',     color: 38,  pitch: 78,  depth: 12, speed: 80 },
-    { name: 'Ocean',    color: 72,  pitch: 55,  depth: 80, speed: 32 },
-    { name: 'Fan',      color: 58,  pitch: 38,  depth: 4,  speed: 95 },
-    { name: 'Deep sea', color: 100, pitch: 22,  depth: 55, speed: 12 },
+    { name: 'White',    color: 0,   pitch: 100, drops: 0,  depth: 0,  speed: 50 },
+    { name: 'Pink',     color: 50,  pitch: 90,  drops: 0,  depth: 0,  speed: 50 },
+    { name: 'Brown',    color: 100, pitch: 62,  drops: 0,  depth: 0,  speed: 50 },
+    { name: 'Rain',     color: 45,  pitch: 62,  drops: 45, depth: 12, speed: 80 },
+    { name: 'Leaves',   color: 70,  pitch: 45,  drops: 30, depth: 25, speed: 60 },
+    { name: 'Downpour', color: 40,  pitch: 70,  drops: 90, depth: 15, speed: 85 },
+    { name: 'Ocean',    color: 72,  pitch: 55,  drops: 0,  depth: 80, speed: 32 },
+    { name: 'Fan',      color: 58,  pitch: 38,  drops: 0,  depth: 4,  speed: 95 },
+    { name: 'Deep sea', color: 100, pitch: 22,  drops: 0,  depth: 55, speed: 12 },
   ];
 
   // Audio runs live through Web Audio: looped buffers are sample-accurate (no seam)
@@ -235,8 +241,74 @@
     return 0.15 / Math.sqrt(power || 1e-9);
   }
 
+  // ---------- rain drops ----------
+  // Each drop is a short noise burst through a resonator (a leaf or surface being
+  // struck), placed at a random time and stereo position. Heavier layers also get
+  // the odd water "plink": a decaying sine whose pitch rises, like a bubble.
+  // Events that run past the end wrap to the start, so each layer loops seamlessly.
+
+  function dropLayer(seconds, rate, opts) {
+    const N = Math.round(SR * seconds);
+    const L = new Float32Array(N), R = new Float32Array(N);
+    const count = Math.round(rate * seconds);
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    const add = (i, v, gl, gr) => { const j = i % N; L[j] += v * gl; R[j] += v * gr; };
+    let seed = (Math.random() * 0xffffffff) | 1;
+
+    for (let e = 0; e < count; e++) {
+      const t0 = Math.floor(Math.random() * N);
+      const amp = Math.exp(-rnd(0, opts.spread));           // many soft drops, few loud ones
+      const th = (0.5 + (Math.random() - 0.5) * 0.9) * Math.PI / 2;
+      const gl = Math.cos(th), gr = Math.sin(th);
+
+      if (Math.random() < opts.plink) {
+        const f0 = rnd(900, 2400), tau = rnd(0.008, 0.02) * SR, len = Math.round(tau * 5);
+        let ph = 0;
+        for (let i = 0; i < len; i++) {
+          ph += 2 * Math.PI * f0 * (1 + 0.8 * i / len) / SR;
+          const env = Math.exp(-i / tau) * Math.min(1, i / (SR * 0.0005));
+          add(t0 + i, Math.sin(ph) * env * amp * 0.5, gl, gr);
+        }
+        continue;
+      }
+
+      const fc = Math.exp(rnd(Math.log(opts.fLo), Math.log(opts.fHi)));
+      const bw = fc / rnd(2, 6);
+      const r = Math.exp(-Math.PI * bw / SR), a1 = 2 * r * Math.cos(2 * Math.PI * fc / SR), a2 = r * r;
+      const tau = rnd(opts.dLo, opts.dHi) * SR, len = Math.round(tau * 6), decay = Math.exp(-1 / tau);
+      const gL = gl * amp * (1 - r), gR = gr * amp * (1 - r);
+      let y1 = 0, y2 = 0, env = 1;
+      for (let i = 0, j = t0; i < len; i++, j++) {
+        if (j === N) j = 0;
+        seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+        const y = (seed / 2147483648) * env + a1 * y1 - a2 * y2;
+        y2 = y1; y1 = y; env *= decay;
+        L[j] += y * gL; R[j] += y * gR;
+      }
+    }
+
+    // Level by RMS, then round off the rare tall peaks with a soft clip. Drops are
+    // spiky (peaks ~30x the average), so a plain peak cap would leave them inaudible.
+    let sum = 0;
+    for (let i = 0; i < N; i++) sum += L[i] * L[i] + R[i] * R[i];
+    const k = opts.rms / Math.sqrt(sum / (2 * N) || 1), c = opts.peak;
+    const buf = ctx.createBuffer(2, N, SR);
+    const bl = buf.getChannelData(0), br = buf.getChannelData(1);
+    for (let i = 0; i < N; i++) { bl[i] = c * Math.tanh(L[i] * k / c); br[i] = c * Math.tanh(R[i] * k / c); }
+    return buf;
+  }
+
+  // Drops slider 0..100 fades these in one after another
+  const DROP_LAYERS = [
+    { secs: 29, rate: 7,   fLo: 500,  fHi: 2200, dLo: 0.004, dHi: 0.012, spread: 2.5, plink: 0.12, rms: 0.05,  peak: 0.38 },
+    { secs: 17, rate: 45,  fLo: 1200, fHi: 4500, dLo: 0.002, dHi: 0.006, spread: 3,   plink: 0.02, rms: 0.06,  peak: 0.3 },
+    { secs: 7,  rate: 300, fLo: 2500, fHi: 8000, dLo: 0.001, dHi: 0.003, spread: 3,   plink: 0,    rms: 0.05,  peak: 0.25 },
+  ];
+  const dropMix = v => DROP_LAYERS.map((_, i) => Math.max(0, Math.min(1, (v / 100) * 3 - i)));
+
   // ---------- graph ----------
   // [white|pink|brown] -> colour gains -> lowpass x2 -> level -> wave -> master -> out
+  // [drop layers] -> drop gains ----------------------------------> wave (no pitch filter)
   // two LFOs push wave.gain around for the swell
 
   const BUTTERWORTH_Q_DB = -3.0103;   // Web Audio's lowpass Q is in dB; this is Q = 0.707
@@ -255,6 +327,16 @@
     src.loop = true;
     src.connect(g);
     src.start(0, Math.random() * secs);
+    return g;
+  });
+
+  const dropGains = DROP_LAYERS.map(o => {
+    const g = ctx.createGain(); g.gain.value = 0; g.connect(wave);
+    const src = ctx.createBufferSource();
+    src.buffer = dropLayer(o.secs, o.rate, o);
+    src.loop = true;
+    src.connect(g);
+    src.start(0, Math.random() * o.secs);
     return g;
   });
 
@@ -303,19 +385,20 @@
     set(depth2.gain, 0.125 * d);
     set(lfo1.frequency, hz);
     set(lfo2.frequency, hz * 0.382);
+    dropMix(s.drops).forEach((m, i) => set(dropGains[i].gain, m));
   }
 
   // ---------- state ----------
 
   const $ = id => document.getElementById(id);
-  const sliders = ['color', 'pitch', 'depth', 'speed'];
+  const sliders = ['color', 'pitch', 'drops', 'depth', 'speed'];
   const store = (() => {
     try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }
   })();
-  let settings = { color: 50, pitch: 90, depth: 0, speed: 50, ...(store.current || {}) };
+  let settings = { color: 50, pitch: 90, drops: 0, depth: 0, speed: 50, ...(store.current || {}) };
   let saved = Array.isArray(store.saved) ? store.saved : [];
   let activeName = store.activeName ?? 'Pink';
-  const keyOf = s => sliders.map(k => s[k]).join(',');
+  const keyOf = s => sliders.map(k => s[k] ?? 0).join(',');   // sounds saved before Drops existed count as 0
 
   function persist() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify({ current: settings, saved, activeName })); } catch {}
@@ -431,6 +514,8 @@
     $('speed-out').textContent = settings.depth === 0 ? '—' : 'every ' + (period < 10 ? period.toFixed(1) : Math.round(period)) + 's';
     $('speed').disabled = settings.depth === 0;
     $('speed').parentElement.style.opacity = settings.depth === 0 ? 0.4 : 1;
+    const d = settings.drops;
+    $('drops-out').textContent = d === 0 ? 'none' : d < 34 ? 'sparse' : d < 67 ? 'steady' : 'downpour';
   }
 
   function chip(label, active, onClick, onDelete) {
@@ -466,7 +551,7 @@
   function syncSliders() { sliders.forEach(k => { $(k).value = settings[k]; }); describe(); }
 
   function apply(p) {
-    sliders.forEach(k => { settings[k] = p[k]; });
+    sliders.forEach(k => { settings[k] = p[k] ?? 0; });
     activeName = p.name;
     syncSliders(); renderChips(); persist(); updateMediaSession();
     applyToGraph(settings, 0.4);   // presets crossfade a little slower
